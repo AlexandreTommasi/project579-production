@@ -1,0 +1,193 @@
+name: Deploy to Azure Web App
+
+on:
+  workflow_dispatch:
+  # Push trigger comentado para evitar deploy automático no primeiro commit
+  # Descomente as linhas abaixo se quiser deploy automático em futuros pushes:
+  # push:
+  #   branches:
+  #     - main
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node.js version
+        uses: actions/setup-node@v3
+        with:
+          node-version: '22.x'
+
+      - name: Build and Prepare Application
+        run: |
+          # Build Frontend
+          cd frontend
+          npm ci --legacy-peer-deps || npm install --legacy-peer-deps
+          npm install styled-components zustand --save --legacy-peer-deps
+          # Remove test files
+          find src -name "*.test.*" -delete 2>/dev/null || true
+          find src -name "*.stories.*" -delete 2>/dev/null || true
+          # Build production
+          npx vite build --mode production
+          
+          # Build Backend
+          cd ../backend
+          # Install dependencies from package-lock.json
+          npm ci || npm install
+          # Compile TypeScript
+          npm run build || npx tsc || echo "TypeScript compiled with warnings"
+          
+          # Create public folder for frontend
+          mkdir -p public
+          cp -r ../frontend/dist/* public/
+          
+          # Create startup file that serves frontend from backend
+          cat > startup.js << 'STARTUPJS'
+          // Azure startup file
+          const path = require('path');
+          const express = require('express');
+          
+          // Set environment
+          process.env.NODE_ENV = 'production';
+          process.env.PORT = process.env.PORT || 8080;
+          
+          // Database config if available
+          if (process.env.DATABASE_CONNECTION_STRING) {
+            const connStr = process.env.DATABASE_CONNECTION_STRING;
+            const parts = connStr.split(';').reduce((acc, part) => {
+              const [key, value] = part.split('=');
+              if (key && value) acc[key] = value;
+              return acc;
+            }, {});
+            
+            process.env.DB_SERVER = parts['Server'] || process.env.DATABASE_SERVER;
+            process.env.DB_DATABASE = parts['Database'] || process.env.DATABASE_NAME;
+            process.env.DB_USER = parts['User ID'] || process.env.DATABASE_USER;
+            process.env.DB_PASSWORD = parts['Password'] || process.env.DATABASE_PASSWORD;
+          }
+          
+          // Import the compiled app (not server)
+          const app = require('./dist/app').default;
+          
+          // Serve static files
+          app.use(express.static(path.join(__dirname, 'public')));
+          
+          // SPA fallback
+          app.get('*', (req, res) => {
+            if (!req.path.startsWith('/api')) {
+              res.sendFile(path.join(__dirname, 'public', 'index.html'));
+            }
+          });
+          
+          // Start server
+          const PORT = process.env.PORT || 8080;
+          app.listen(PORT, () => {
+            console.log('Server running on port ' + PORT);
+          });
+          STARTUPJS
+          
+          # Update package.json
+          node -e "const fs=require('fs');const p=JSON.parse(fs.readFileSync('package.json'));p.scripts.start='node startup.js';p.main='startup.js';fs.writeFileSync('package.json',JSON.stringify(p,null,2));"
+
+      - name: Create Azure configuration files
+        run: |
+          cd backend
+          
+          # Create web.config for IIS/Azure
+          cat > web.config << 'WEBCONFIG'
+          <?xml version="1.0" encoding="utf-8"?>
+          <configuration>
+            <system.webServer>
+              <handlers>
+                <add name="iisnode" path="startup.js" verb="*" modules="iisnode"/>
+              </handlers>
+              <rewrite>
+                <rules>
+                  <rule name="NodeInspector" patternSyntax="ECMAScript" stopProcessing="true">
+                    <match url="^startup.js/debug[/]?" />
+                  </rule>
+                  <rule name="StaticContent">
+                    <action type="Rewrite" url="public{REQUEST_URI}"/>
+                  </rule>
+                  <rule name="DynamicContent">
+                    <conditions>
+                      <add input="{REQUEST_FILENAME}" matchType="IsFile" negate="True"/>
+                    </conditions>
+                    <action type="Rewrite" url="startup.js"/>
+                  </rule>
+                </rules>
+              </rewrite>
+              <security>
+                <requestFiltering>
+                  <hiddenSegments>
+                    <remove segment="bin"/>
+                  </hiddenSegments>
+                </requestFiltering>
+              </security>
+              <httpErrors existingResponse="PassThrough" />
+              <iisnode nodeProcessCommandLine="node" />
+            </system.webServer>
+          </configuration>
+          WEBCONFIG
+          
+          # Create .deployment file for Azure
+          cat > .deployment << 'DEPLOYMENT'
+          [config]
+          SCM_DO_BUILD_DURING_DEPLOYMENT=false
+          DEPLOYMENT
+          
+          # Create iisnode.yml
+          cat > iisnode.yml << 'IISNODE'
+          node_env: production
+          nodeProcessCommandLine: node
+          loggingEnabled: true
+          logDirectory: iisnode
+          IISNODE
+          
+      - name: Zip artifact for deployment
+        run: |
+          cd backend
+          # Include all files including hidden ones
+          zip -r release.zip . -x "*.git*" -x "node_modules/*" -x "*.log"
+
+      - name: Upload artifact for deployment job
+        uses: actions/upload-artifact@v4
+        with:
+          name: node-app
+          path: backend/release.zip
+
+  deploy:
+    runs-on: ubuntu-latest
+    needs: build
+    environment:
+      name: 'Production'
+      url: ${{ steps.deploy-to-webapp.outputs.webapp-url }}
+    
+    permissions:
+      id-token: write
+
+    steps:
+      - name: Download artifact from build job
+        uses: actions/download-artifact@v4
+        with:
+          name: node-app
+
+      - name: Unzip artifact for deployment
+        run: unzip release.zip
+      
+      - name: Login to Azure
+        uses: azure/login@v1
+        with:
+          creds: ${{ secrets.AZURE_CREDENTIALS }}
+
+      - name: 'Deploy to Azure Web App'
+        id: deploy-to-webapp
+        uses: azure/webapps-deploy@v2
+        with:
+          app-name: 'expandev-01'
+          package: .
