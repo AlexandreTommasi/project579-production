@@ -1,0 +1,42 @@
+{
+  "projectId": 579,
+  "featureId": 3434,
+  "generatedAt": "2025-08-28T17:55:43.848Z",
+  "task": "Task4",
+  "type": "structure",
+  "files": [
+    "backend/package.json",
+    "backend/tsconfig.json",
+    "backend/.env.example",
+    "backend/.gitignore",
+    "backend/nodemon.json",
+    "backend/jest.config.ts",
+    "backend/README.md",
+    "backend/src/server.ts",
+    "backend/src/app.ts",
+    "backend/src/config/index.ts",
+    "backend/src/core/errors/ApiError.ts",
+    "backend/src/core/errors/BadRequestError.ts",
+    "backend/src/core/errors/NotFoundError.ts",
+    "backend/src/core/middleware/errorHandler.ts",
+    "backend/src/core/middleware/requestLogger.ts",
+    "backend/src/core/middleware/security.ts",
+    "backend/src/core/middleware/validateRequest.ts",
+    "backend/src/core/utils/asyncHandler.ts",
+    "backend/src/core/utils/logger.ts",
+    "backend/src/infra/database/sqlserver/connection.ts",
+    "backend/src/modules/index.ts",
+    "backend/src/modules/README.md",
+    "backend/src/modules/_health/health.controller.ts",
+    "backend/src/modules/_health/health.routes.ts",
+    "backend/src/shared/constants/httpStatus.ts",
+    "backend/src/shared/interfaces/express.d.ts",
+    "backend/tests/setup.ts",
+    "backend/tests/_health/health.test.ts"
+  ],
+  "metadata": {
+    "totalFiles": 28,
+    "executionTime": 70223,
+    "model": "gemini-2.5-pro-preview-05-06"
+  }
+}
